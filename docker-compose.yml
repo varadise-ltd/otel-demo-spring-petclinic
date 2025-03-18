@@ -1,5 +1,33 @@
+version: '3.8'
 services:
+  app:
+    image: spring-petclinic:3.4.0-SNAPSHOT
+    environment:
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_SERVICE_NAME: 'graal-native-example-app'
+      OTEL_EXPORTER_OTLP_ENDPOINT: 'http://otelcol:4317'
+      OTEL_TRACES_EXPORTER: 'otlp'
+      OTEL_METRICS_EXPORTER: 'otlp'
+#      SPRING_PROFILES_ACTIVE: postgres
+    ports:
+      - '8080:8080'
+    depends_on:
+      - otelcol
+    networks:
+      - mynetwork
+
+  otelcol:
+    image: otel/opentelemetry-collector-contrib:0.109.0
+    volumes:
+      - ./collector-spring-native-config.yaml:/collector-spring-native-config.yaml
+    command: [ '--config=/collector-spring-native-config.yaml' ]
+    networks:
+        - mynetwork
+    ports:
+      - '9091:9090'
+
   mysql:
+    entrypoint: "echo 'MySQL skip'"
     image: mysql:9.1
     ports:
       - "3306:3306"
@@ -11,6 +39,9 @@ services:
       - MYSQL_DATABASE=petclinic
     volumes:
       - "./conf.d:/etc/mysql/conf.d:ro"
+    networks:
+      - mynetwork
+
   postgres:
     image: postgres:17.0
     ports:
@@ -19,3 +50,55 @@ services:
       - POSTGRES_PASSWORD=petclinic
       - POSTGRES_USER=petclinic
       - POSTGRES_DB=petclinic
+    networks:
+      - mynetwork
+
+  loki:
+    image: grafana/loki:3.0.0
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+    networks:
+      - mynetwork
+
+
+  prometheus:
+    image: prom/prometheus:v2.51.2
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./etc/prometheus:/workspace
+    command:
+      - --config.file=/workspace/prometheus.yml
+      - --enable-feature=exemplar-storage
+    networks:
+      - mynetwork
+
+
+  tempo:
+    image: grafana/tempo:2.4.1
+    command: [ "--target=all", "--storage.trace.backend=local", "--storage.trace.local.path=/var/tempo", "--auth.enabled=false" ]
+    ports:
+      - "14250:14250"
+      - "4317:4317"
+    networks:
+      - mynetwork
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./etc/grafana/:/etc/grafana/provisioning/datasources
+      - ./etc/dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml
+      - ./etc/dashboards:/etc/grafana/dashboards
+    depends_on:
+      - loki
+      - prometheus
+      - tempo
+    networks:
+      - mynetwork
+
+
+networks:
+  mynetwork:
